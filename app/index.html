@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Japan in Numbers — a national statistics site</title>
+<meta name="description" content="Headline statistics for Japan, 2015–2024: population, economy, jobs, prices, education, health and regions. Rounded public estimates, explored in your browser with no network requests.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-head">
+  <div class="wrap head-in">
+    <a class="brand" href="#/"><span class="brand-mark" aria-hidden="true">JP</span><span class="brand-text"><strong>Japan in Numbers</strong><small>National statistics, 2015–2024</small></span></a>
+    <button type="button" class="menu-btn" data-action="menu" aria-label="Open the navigation menu" aria-expanded="false" aria-controls="nav">☰ Menu</button>
+    <nav id="nav" class="nav" aria-label="Sections"></nav>
+  </div>
+</header>
+<main id="view" class="wrap"></main>
+<footer class="site-foot">
+  <div class="wrap foot-in">
+    <p>Japan in Numbers — figures are rounded public estimates for 2015–2024. No data leaves your browser: the whole site runs from its own files, with zero network requests.</p>
+    <p><a href="#/about">About &amp; methods</a> · <a href="#/" data-action="top">Back to top ↑</a></p>
+  </div>
+</footer>
+<noscript><p class="noscript">This site needs JavaScript to draw its charts and tables.</p></noscript>
+<script src="data.js"></script>
+<script src="charts.js"></script>
+<script src="views.js"></script>
+<script src="main.js"></script>
+</body>
+</html>

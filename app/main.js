@@ -1,236 +1,222 @@
-// Japan in Numbers — router and interaction.
+// Japan in Numbers — router and interactions.
 //
-// Hash routes, one per section. The page re-renders on every hash change, and
-// a single delegated listener handles every control: year buttons, tabs, the
-// sortable regions table, the finder, and the data explorer. No control is
-// decorative — each one updates state and re-renders its part of the page.
+// One page, nine hash routes. The router renders the view for the current
+// hash into #app; every control on a view is wired up here by delegation,
+// so a view's HTML never carries inline handlers. All state lives in this
+// file and is passed to the views.
 
-(function () {
-  'use strict';
+import { SERIES, YEARS, GDP_SECTORS } from './data.js';
+import {
+  viewAbout,
+  viewEconomy,
+  viewEducationHealth,
+  viewExplorer,
+  viewJobs,
+  viewOverview,
+  viewPopulation,
+  viewPrices,
+  viewRegions,
+} from './views.js';
 
-  var V = window.JINViews;
-  var D = window.JIN;
+const ROUTES = {
+  '/': viewOverview,
+  '/population': viewPopulation,
+  '/economy': viewEconomy,
+  '/jobs': viewJobs,
+  '/prices': viewPrices,
+  '/education-health': viewEducationHealth,
+  '/regions': viewRegions,
+  '/explorer': viewExplorer,
+  '/about': viewAbout,
+};
 
-  var state = {
-    pyramidYear: 2024,
-    tradeYear: 2024,
-    sectorIndex: 0,
-    jobsTab: 'all',
-    cpiYear: 2024,
-    eduMode: 'age',
-    regionFilter: '',
-    regionSort: { key: 'pop', dir: -1 },
-    regionSelected: 'Kanto',
-    exIndicator: 'population',
-    exFrom: 2015,
-    exTo: 2024,
-    exType: 'line',
-  };
+const TITLES = {
+  '/': 'Japan in Numbers — Overview',
+  '/population': 'Population — Japan in Numbers',
+  '/economy': 'Economy — Japan in Numbers',
+  '/jobs': 'Employment & income — Japan in Numbers',
+  '/prices': 'Prices & inflation — Japan in Numbers',
+  '/education-health': 'Education & health — Japan in Numbers',
+  '/regions': 'Regions compared — Japan in Numbers',
+  '/explorer': 'Data explorer — Japan in Numbers',
+  '/about': 'About & methods — Japan in Numbers',
+};
 
-  var ROUTES = {
-    '': 'overview',
-    '/': 'overview',
-    '/population': 'population',
-    '/economy': 'economy',
-    '/jobs': 'jobs',
-    '/prices': 'prices',
-    '/education-health': 'eduHealth',
-    '/regions': 'regions',
-    '/explorer': 'explorer',
-    '/about': 'about',
-  };
+const state = {
+  search: '',
+  pyramidYear: 2024,
+  tradeYear: 2024,
+  jobsTab: 'all',
+  cpiYear: 2024,
+  attainmentGroup: 'All ages 25–64',
+  regionFilter: '',
+  regionSort: { key: 'population', dir: -1 },
+  regionSelected: null,
+  explorer: { indicator: 'population', from: 2015, to: 2024, type: 'line' },
+};
 
-  var NAV = [
-    ['#/', 'Overview'],
-    ['#/population', 'Population'],
-    ['#/economy', 'Economy'],
-    ['#/jobs', 'Jobs'],
-    ['#/prices', 'Prices'],
-    ['#/education-health', 'Education & health'],
-    ['#/regions', 'Regions'],
-    ['#/explorer', 'Explorer'],
-    ['#/about', 'About'],
-  ];
+const app = document.getElementById('app');
+const nav = document.getElementById('nav');
+const menuButton = document.getElementById('menu-button');
 
-  function routeName() {
-    var hash = window.location.hash || '#/';
-    var path = hash.slice(1);
-    return ROUTES[path] || 'overview';
+function currentRoute() {
+  const hash = window.location.hash.replace(/^#/, '') || '/';
+  return Object.hasOwn(ROUTES, hash) ? hash : '/';
+}
+
+function render() {
+  const route = currentRoute();
+  const view = ROUTES[route];
+  app.innerHTML = view(state);
+  document.title = TITLES[route];
+  for (const link of nav.querySelectorAll('a')) {
+    const href = link.getAttribute('href');
+    if (href === `#${route}`) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
   }
+  nav.classList.remove('open');
+  menuButton.setAttribute('aria-expanded', 'false');
+}
 
-  function render() {
-    var name = routeName();
-    var view = document.getElementById('view');
-    view.innerHTML = V[name](state);
-    document.title = 'Japan in Numbers — ' + name.charAt(0).toUpperCase() + name.slice(1);
-    var nav = document.getElementById('nav');
-    var links = nav.querySelectorAll('a');
-    links.forEach(function (a) {
-      var href = a.getAttribute('href');
-      var path = href.slice(1);
-      a.classList.toggle('current', (ROUTES[path] || 'overview') === name);
-      if ((ROUTES[path] || 'overview') === name) a.setAttribute('aria-current', 'page');
-      else a.removeAttribute('aria-current');
-    });
-    nav.classList.remove('open');
-    var menuBtn = document.querySelector('[data-action="menu"]');
-    if (menuBtn) menuBtn.setAttribute('aria-expanded', 'false');
-    window.scrollTo(0, 0);
-  }
-
-  function rerenderPanel() {
-    var panel = document.getElementById('ex-panel');
-    if (panel) panel.innerHTML = V.explorerPanel(state);
-  }
-
-  function finderFilter(query) {
-    var list = document.getElementById('finder-list');
-    if (!list) return;
-    var q = query.trim().toLowerCase();
-    list.querySelectorAll('li').forEach(function (li) {
-      li.style.display = !q || li.textContent.toLowerCase().indexOf(q) !== -1 ? '' : 'none';
-    });
-  }
-
-  function regionRefresh() {
-    var body = document.getElementById('region-body');
-    if (body) body.innerHTML = V.regionRows(state);
-    var detail = document.getElementById('region-detail');
-    if (detail) detail.innerHTML = V.regionDetail(state);
-  }
-
-  function downloadCsv() {
-    var s = D.SERIES[state.exIndicator];
-    var from = Math.min(state.exFrom, state.exTo);
-    var to = Math.max(state.exFrom, state.exTo);
-    var lines = ['year,' + s.label.replace(/,/g, '') + ' (' + s.unit + ')'];
-    D.YEARS.forEach(function (y, i) {
-      if (y >= from && y <= to) lines.push(y + ',' + s.values[i]);
-    });
-    var blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv' });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = 'japan-' + state.exIndicator + '-' + from + '-' + to + '.csv';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }
-
-  function onClick(event) {
-    var el = event.target.closest('[data-action]');
-    if (!el) return;
-    var action = el.getAttribute('data-action');
-    if (action === 'pyramid-year') {
-      state.pyramidYear = Number(el.getAttribute('data-year'));
-      render();
-    } else if (action === 'trade-year') {
-      state.tradeYear = Number(el.getAttribute('data-year'));
-      render();
-    } else if (action === 'sector-pick') {
-      state.sectorIndex = Number(el.getAttribute('data-sector'));
-      render();
-    } else if (action === 'jobs-tab') {
-      state.jobsTab = el.getAttribute('data-tab');
-      render();
-    } else if (action === 'cpi-year') {
-      state.cpiYear = Number(el.getAttribute('data-year'));
-      render();
-    } else if (action === 'edu-mode') {
-      state.eduMode = el.getAttribute('data-mode');
-      render();
-    } else if (action === 'region-sort') {
-      var key = el.getAttribute('data-key');
-      if (state.regionSort.key === key) state.regionSort.dir = -state.regionSort.dir;
-      else state.regionSort = { key: key, dir: key === 'name' ? 1 : -1 };
-      render();
-      var input = document.getElementById('region-filter');
-      if (input) input.focus();
-    } else if (action === 'region-row') {
-      state.regionSelected = el.getAttribute('data-name');
-      var detail = document.getElementById('region-detail');
-      if (detail) {
-        detail.innerHTML = V.regionDetail(state);
-        detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+function rerenderKeepFocus() {
+  const active = document.activeElement;
+  const id = active && active.id ? active.id : null;
+  const value = active && 'value' in active ? active.value : null;
+  const start = active && typeof active.selectionStart === 'number' ? active.selectionStart : null;
+  render();
+  if (id) {
+    const next = document.getElementById(id);
+    if (next) {
+      next.focus();
+      if (value !== null && 'value' in next) next.value = value;
+      if (start !== null && typeof next.setSelectionRange === 'function') {
+        try {
+          next.setSelectionRange(start, start);
+        } catch {
+          // A select has no caret to restore; the value above is enough.
+        }
       }
-      document.querySelectorAll('#region-body tr').forEach(function (tr) {
-        tr.classList.toggle('selected', tr.getAttribute('data-name') === state.regionSelected);
-      });
-    } else if (action === 'ex-type') {
-      state.exType = el.getAttribute('data-type');
-      render();
-    } else if (action === 'ex-csv') {
-      downloadCsv();
-    } else if (action === 'menu') {
-      var navEl = document.getElementById('nav');
-      navEl.classList.toggle('open');
-      el.setAttribute('aria-expanded', navEl.classList.contains('open') ? 'true' : 'false');
-    } else if (action === 'top') {
-      event.preventDefault();
-      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   }
+}
 
-  function onMouseOver(event) {
-    var seg = event.target.closest('[data-sector]');
-    if (!seg) return;
-    var note = document.getElementById('sector-note');
-    if (!note) return;
-    var s = D.GDP_SECTORS[Number(seg.getAttribute('data-sector'))];
-    note.innerHTML = '<strong>' + s.name + ' — ' + s.share.toFixed(1) + '% of GDP.</strong> ' + s.note;
+function downloadCsv() {
+  const ex = state.explorer;
+  const ind = SERIES[ex.indicator];
+  const from = Math.min(ex.from, ex.to);
+  const to = Math.max(ex.from, ex.to);
+  const lines = [`Year,${ind.label} (${ind.unit})`];
+  for (const y of YEARS) {
+    if (y < from || y > to) continue;
+    lines.push(`${y},${ind.values[YEARS.indexOf(y)]}`);
   }
+  const blob = new Blob([`${lines.join('\n')}\n`], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `japan-${ex.indicator}-${from}-${to}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
-  function onChange(event) {
-    var id = event.target.id;
-    if (id === 'ex-indicator') {
-      state.exIndicator = event.target.value;
-      rerenderPanel();
-    } else if (id === 'ex-from') {
-      state.exFrom = Number(event.target.value);
-      rerenderPanel();
-    } else if (id === 'ex-to') {
-      state.exTo = Number(event.target.value);
-      rerenderPanel();
-    }
+function sectorNote(name) {
+  const item = GDP_SECTORS.find((s) => s.name === name);
+  if (!item) return;
+  const detail = document.getElementById('sector-detail');
+  if (detail) detail.textContent = `${item.name} — ${item.share.toFixed(1)}% of GDP. ${item.note}`;
+}
+
+app.addEventListener('click', (event) => {
+  const target = event.target.closest('[data-action]');
+  if (!target) return;
+  const action = target.dataset.action;
+  if (action === 'pyramid-year') {
+    state.pyramidYear = Number(target.dataset.year);
+    render();
+  } else if (action === 'trade-year') {
+    state.tradeYear = Number(target.dataset.year);
+    render();
+  } else if (action === 'jobs-tab') {
+    state.jobsTab = target.dataset.tab;
+    render();
+  } else if (action === 'cpi-year') {
+    state.cpiYear = Number(target.dataset.year);
+    render();
+  } else if (action === 'attainment-group') {
+    state.attainmentGroup = target.dataset.group;
+    render();
+  } else if (action === 'region-sort') {
+    const key = target.dataset.key;
+    if (state.regionSort.key === key) state.regionSort.dir *= -1;
+    else state.regionSort = { key, dir: key === 'name' ? 1 : -1 };
+    render();
+  } else if (action === 'region-row') {
+    state.regionSelected = target.dataset.region;
+    render();
+    const detail = document.querySelector('.region-detail');
+    if (detail) detail.scrollIntoView({ block: 'nearest' });
+  } else if (action === 'explorer-type') {
+    state.explorer.type = target.dataset.type;
+    render();
+  } else if (action === 'explorer-csv') {
+    downloadCsv();
   }
+});
 
-  function onInput(event) {
-    var id = event.target.id;
-    if (id === 'finder') finderFilter(event.target.value);
-    else if (id === 'region-filter') {
-      state.regionFilter = event.target.value;
-      var body = document.getElementById('region-body');
-      if (body) body.innerHTML = V.regionRows(state);
-    }
+app.addEventListener('input', (event) => {
+  const target = event.target.closest('[data-action]');
+  if (!target) return;
+  const action = target.dataset.action;
+  if (action === 'finder') {
+    state.search = target.value;
+    rerenderKeepFocus();
+  } else if (action === 'region-filter') {
+    state.regionFilter = target.value;
+    rerenderKeepFocus();
   }
+});
 
-  function onKeyDown(event) {
-    if (event.key !== 'Enter' && event.key !== ' ') return;
-    var el = event.target.closest('[data-action="region-sort"], [data-action="region-row"]');
-    if (!el) return;
-    event.preventDefault();
-    el.click();
-  }
-
-  function buildNav() {
-    var nav = document.getElementById('nav');
-    nav.innerHTML = NAV.map(function (pair) {
-      return '<a href="' + pair[0] + '">' + pair[1] + '</a>';
-    }).join('');
-  }
-
-  function init() {
-    buildNav();
-    document.addEventListener('click', onClick);
-    document.addEventListener('mouseover', onMouseOver);
-    document.addEventListener('change', onChange);
-    document.addEventListener('input', onInput);
-    document.addEventListener('keydown', onKeyDown);
-    window.addEventListener('hashchange', render);
+app.addEventListener('change', (event) => {
+  const target = event.target.closest('[data-action]');
+  if (!target) return;
+  const action = target.dataset.action;
+  if (action === 'explorer-indicator') {
+    state.explorer.indicator = target.value;
+    render();
+  } else if (action === 'explorer-from') {
+    state.explorer.from = Number(target.value);
+    render();
+  } else if (action === 'explorer-to') {
+    state.explorer.to = Number(target.value);
     render();
   }
+});
 
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
-  else init();
-})();
+app.addEventListener('mouseover', (event) => {
+  const seg = event.target.closest('.donut-seg, .donut-legend');
+  if (seg) sectorNote(seg.dataset.name);
+});
+
+app.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  const row = event.target.closest('[data-action="region-row"]');
+  if (row) {
+    event.preventDefault();
+    state.regionSelected = row.dataset.region;
+    render();
+  }
+});
+
+menuButton.addEventListener('click', () => {
+  const open = nav.classList.toggle('open');
+  menuButton.setAttribute('aria-expanded', String(open));
+});
+
+window.addEventListener('hashchange', () => {
+  render();
+  window.scrollTo(0, 0);
+});
+
+render();

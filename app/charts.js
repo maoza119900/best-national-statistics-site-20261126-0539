@@ -1,275 +1,223 @@
-// Japan in Numbers — chart library.
-//
-// Every chart is hand-written SVG: no chart library, no external asset. Each
-// builder takes plain arrays and returns an SVG string the views drop into
-// the page. Labels are placed to avoid collisions: x-axis ticks are thinned
-// to every second year, value labels sit clear of the bars, and negative bars
-// carry their label below the zero line instead of inside the bar.
+// Hand-written SVG charts for Japan in Numbers. No chart library, no
+// network: every chart is a string of SVG built from the numbers passed in.
+// Colours come from the site palette so charts and page agree. The SVGs
+// carry no xmlns attribute: they are injected into the HTML page, where
+// inline SVG needs none, so app/ holds no absolute URL at all.
 
-(function () {
-  'use strict';
+const INK = '#1b2a4a';
+const MUTED = '#5b6b84';
+const GRID = '#dbe2ec';
+const BLUE = '#2456a6';
+const TEAL = '#0e7c7b';
+const AMBER = '#c47f17';
+const ROSE = '#b3375a';
+const SLATE = '#7a8aa0';
+const PALETTE = [BLUE, TEAL, AMBER, ROSE, '#5b7fb8', SLATE, '#3f9e6e', '#8a6fb8'];
 
-  var INK = '#1b2a4a';
-  var MUTED = '#5b6b84';
-  var GRID = '#e3e8f0';
-  var BLUE = '#2563eb';
-  var TEAL = '#0d9488';
-  var AMBER = '#d97706';
-  var ROSE = '#e11d48';
-  var VIOLET = '#7c3aed';
-  var GREEN = '#15803d';
-  var PALETTE = [BLUE, TEAL, AMBER, ROSE, VIOLET, GREEN, '#0891b2', '#be185d'];
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-  function esc(text) {
-    return String(text)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+/** Round a number to one decimal, trimming a trailing ".0". */
+const num = (v) => {
+  const r = Math.round(v * 10) / 10;
+  return Number.isInteger(r) ? String(r) : r.toFixed(1);
+};
+
+/** Nice axis ticks: at most `count` steps covering [min, max]. */
+function niceTicks(min, max, count = 4) {
+  if (min === max) {
+    min -= 1;
+    max += 1;
   }
+  const span = max - min;
+  const step0 = span / count;
+  const mag = 10 ** Math.floor(Math.log10(step0));
+  const norm = step0 / mag;
+  const step = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10) * mag;
+  const lo = Math.floor(min / step) * step;
+  const hi = Math.ceil(max / step) * step;
+  const out = [];
+  for (let v = lo; v <= hi + step / 2; v += step) out.push(Math.round(v * 100) / 100);
+  return { lo, hi, step, ticks: out };
+}
 
-  function niceTicks(min, max, count) {
-    if (min === max) { min -= 1; max += 1; }
-    var span = max - min;
-    var step = span / count;
-    var mag = Math.pow(10, Math.floor(Math.log10(step)));
-    var norm = step / mag;
-    var nice = norm < 1.5 ? 1 : norm < 3.5 ? 2 : norm < 7.5 ? 5 : 10;
-    step = nice * mag;
-    var start = Math.floor(min / step) * step;
-    var ticks = [];
-    for (var v = start; v <= max + step * 0.5; v += step) {
-      ticks.push(Math.round(v * 100) / 100);
-    }
-    return ticks;
-  }
+/**
+ * Line chart. `labels` are x labels, `values` the points. The y axis gets
+ * its own column on the left and the x labels sit 26px below the plot, so a
+ * bottom tick never collides with a year label.
+ */
+export function lineChart({ labels, values, width = 640, height = 300, format = num, color = BLUE, label = '' }) {
+  const padL = 56;
+  const padR = 16;
+  const padT = 14;
+  const padB = 30;
+  const w = width - padL - padR;
+  const h = height - padT - padB;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const pad = (max - min) * 0.12 || 1;
+  const { lo, hi, ticks } = niceTicks(min - pad, max + pad);
+  const x = (i) => padL + (i * w) / (labels.length - 1);
+  const y = (v) => padT + h - ((v - lo) / (hi - lo)) * h;
+  const points = values.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const grid = ticks
+    .map(
+      (t) =>
+        `<line x1="${padL}" y1="${y(t)}" x2="${padL + w}" y2="${y(t)}" stroke="${GRID}" stroke-width="1"/>` +
+        `<text x="${padL - 8}" y="${y(t) + 4}" text-anchor="end" font-size="11" fill="${MUTED}">${esc(format(t))}</text>`,
+    )
+    .join('');
+  const xLabels = labels
+    .map((l, i) => `<text x="${x(i)}" y="${padT + h + 20}" text-anchor="middle" font-size="11" fill="${MUTED}">${esc(l)}</text>`)
+    .join('');
+  const dots = values
+    .map((v, i) => `<circle cx="${x(i)}" cy="${y(v)}" r="3.5" fill="#fff" stroke="${color}" stroke-width="2"><title>${esc(labels[i])}: ${esc(format(v))}</title></circle>`)
+    .join('');
+  const last = values[values.length - 1];
+  const endLabel = `<text x="${x(values.length - 1) - 4}" y="${y(last) - 10}" text-anchor="end" font-size="12" font-weight="700" fill="${color}">${esc(format(last))}</text>`;
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(label || 'Line chart')}">
+${grid}
+<line x1="${padL}" y1="${padT + h}" x2="${padL + w}" y2="${padT + h}" stroke="${INK}" stroke-width="1"/>
+<polyline points="${points}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+${dots}
+${endLabel}
+${xLabels}
+</svg>`;
+}
 
-  function num(value, decimals) {
-    var n = Number(value);
-    if (decimals === undefined) decimals = 1;
-    return n.toLocaleString('en-US', {
-      minimumFractionDigits: decimals,
-      maximumFractionDigits: decimals,
-    });
-  }
+/**
+ * Bar chart. Handles negative values: the zero line sits inside the plot,
+ * positive bars rise from it and negative bars hang below it, and each
+ * value label sits outside its bar's far end so it never overlaps the bar.
+ */
+export function barChart({ labels, values, width = 640, height = 300, format = num, color = BLUE, label = '' }) {
+  const padL = 56;
+  const padR = 16;
+  const padT = 22;
+  const padB = 30;
+  const w = width - padL - padR;
+  const h = height - padT - padB;
+  const min = Math.min(0, ...values);
+  const max = Math.max(0, ...values);
+  const pad = (max - min) * 0.08 || 1;
+  const { lo, hi, ticks } = niceTicks(min - pad, max + pad);
+  const y = (v) => padT + h - ((v - lo) / (hi - lo)) * h;
+  const slot = w / labels.length;
+  const bw = Math.min(44, slot * 0.62);
+  const grid = ticks
+    .map(
+      (t) =>
+        `<line x1="${padL}" y1="${y(t)}" x2="${padL + w}" y2="${y(t)}" stroke="${GRID}" stroke-width="1"/>` +
+        `<text x="${padL - 8}" y="${y(t) + 4}" text-anchor="end" font-size="11" fill="${MUTED}">${esc(format(t))}</text>`,
+    )
+    .join('');
+  const bars = values
+    .map((v, i) => {
+      const cx = padL + slot * i + slot / 2;
+      const y0 = y(0);
+      const yv = y(v);
+      const top = Math.min(y0, yv);
+      const bh = Math.max(1, Math.abs(yv - y0));
+      const fill = v < 0 ? ROSE : color;
+      const labelY = v < 0 ? yv + 15 : yv - 6;
+      return `<rect x="${(cx - bw / 2).toFixed(1)}" y="${top.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="2" fill="${fill}"><title>${esc(labels[i])}: ${esc(format(v))}</title></rect>` +
+        `<text x="${cx}" y="${labelY.toFixed(1)}" text-anchor="middle" font-size="11" font-weight="600" fill="${INK}">${esc(format(v))}</text>`;
+    })
+    .join('');
+  const xLabels = labels
+    .map((l, i) => `<text x="${padL + slot * i + slot / 2}" y="${padT + h + 20}" text-anchor="middle" font-size="11" fill="${MUTED}">${esc(l)}</text>`)
+    .join('');
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(label || 'Bar chart')}">
+${grid}
+<line x1="${padL}" y1="${y(0)}" x2="${padL + w}" y2="${y(0)}" stroke="${INK}" stroke-width="1"/>
+${bars}
+${xLabels}
+</svg>`;
+}
 
-  // Line chart with a filled area, dots, and a y axis that always includes
-  // zero when the values are all positive. `series` is one array of numbers.
-  function lineChart(opts) {
-    var labels = opts.labels;
-    var values = opts.values;
-    var w = opts.width || 760;
-    var h = opts.height || 300;
-    var padL = 58;
-    var padR = 16;
-    var padT = 18;
-    var padB = 34;
-    var color = opts.color || BLUE;
-    var decimals = opts.decimals === undefined ? 1 : opts.decimals;
-    var suffix = opts.suffix || '';
-    var min = Math.min.apply(null, values.concat([0]));
-    var max = Math.max.apply(null, values);
-    if (max - min < 1) max = min + 1;
-    var ticks = niceTicks(min, max, 4);
-    var lo = ticks[0];
-    var hi = ticks[ticks.length - 1];
-    var iw = w - padL - padR;
-    var ih = h - padT - padB;
-    function x(i) { return padL + (i * iw) / (labels.length - 1); }
-    function y(v) { return padT + ih - ((v - lo) / (hi - lo)) * ih; }
-    var out = [];
-    out.push('<svg viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' + esc(opts.title || 'Line chart') + '">');
-    ticks.forEach(function (t) {
-      out.push('<line x1="' + padL + '" y1="' + y(t).toFixed(1) + '" x2="' + (w - padR) + '" y2="' + y(t).toFixed(1) + '" stroke="' + GRID + '"/>');
-      out.push('<text x="' + (padL - 8) + '" y="' + (y(t) + 4).toFixed(1) + '" text-anchor="end" font-size="11" fill="' + MUTED + '">' + num(t, decimals) + suffix + '</text>');
-    });
-    var area = 'M' + x(0).toFixed(1) + ',' + y(values[0]).toFixed(1);
-    var line = 'M' + x(0).toFixed(1) + ',' + y(values[0]).toFixed(1);
-    for (var i = 1; i < values.length; i++) {
-      area += ' L' + x(i).toFixed(1) + ',' + y(values[i]).toFixed(1);
-      line += ' L' + x(i).toFixed(1) + ',' + y(values[i]).toFixed(1);
-    }
-    area += ' L' + x(values.length - 1).toFixed(1) + ',' + y(lo).toFixed(1) + ' L' + x(0).toFixed(1) + ',' + y(lo).toFixed(1) + ' Z';
-    out.push('<path d="' + area + '" fill="' + color + '" fill-opacity="0.08"/>');
-    out.push('<path d="' + line + '" fill="none" stroke="' + color + '" stroke-width="2.5" stroke-linejoin="round"/>');
-    values.forEach(function (v, i) {
-      out.push('<circle cx="' + x(i).toFixed(1) + '" cy="' + y(v).toFixed(1) + '" r="3.5" fill="#fff" stroke="' + color + '" stroke-width="2"/>');
-    });
-    // Last value labelled at the end of the line, clear of the axis.
-    var last = values[values.length - 1];
-    out.push('<text x="' + (x(values.length - 1) - 4).toFixed(1) + '" y="' + (y(last) - 10).toFixed(1) + '" text-anchor="end" font-size="12" font-weight="700" fill="' + INK + '">' + num(last, decimals) + suffix + '</text>');
-    labels.forEach(function (lab, i) {
-      if (i % 2 === 0 || i === labels.length - 1) {
-        out.push('<text x="' + x(i).toFixed(1) + '" y="' + (h - 10) + '" text-anchor="middle" font-size="11" fill="' + MUTED + '">' + esc(lab) + '</text>');
-      }
-    });
-    out.push('</svg>');
-    return out.join('');
-  }
-
-  // Vertical bar chart. Negative bars grow below the zero line and their
-  // labels sit under the bar end, never overlapping the axis labels.
-  function barChart(opts) {
-    var labels = opts.labels;
-    var values = opts.values;
-    var w = opts.width || 760;
-    var h = opts.height || 300;
-    var padL = 58;
-    var padR = 16;
-    var padT = 24;
-    var padB = 34;
-    var decimals = opts.decimals === undefined ? 1 : opts.decimals;
-    var suffix = opts.suffix || '';
-    var min = Math.min.apply(null, values.concat([0]));
-    var max = Math.max.apply(null, values.concat([0]));
-    if (max - min < 1) max = min + 1;
-    var ticks = niceTicks(min, max, 4);
-    var lo = ticks[0];
-    var hi = ticks[ticks.length - 1];
-    var iw = w - padL - padR;
-    var ih = h - padT - padB;
-    function y(v) { return padT + ih - ((v - lo) / (hi - lo)) * ih; }
-    var slot = iw / labels.length;
-    var bw = Math.min(46, slot * 0.62);
-    var out = [];
-    out.push('<svg viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' + esc(opts.title || 'Bar chart') + '">');
-    ticks.forEach(function (t) {
-      out.push('<line x1="' + padL + '" y1="' + y(t).toFixed(1) + '" x2="' + (w - padR) + '" y2="' + y(t).toFixed(1) + '" stroke="' + GRID + '"/>');
-      out.push('<text x="' + (padL - 8) + '" y="' + (y(t) + 4).toFixed(1) + '" text-anchor="end" font-size="11" fill="' + MUTED + '">' + num(t, decimals) + suffix + '</text>');
-    });
-    values.forEach(function (v, i) {
-      var cx = padL + slot * i + slot / 2;
-      var color = opts.colors ? opts.colors[i % opts.colors.length] : (v < 0 ? ROSE : BLUE);
-      var top = Math.min(y(v), y(0));
-      var height = Math.abs(y(v) - y(0));
-      out.push('<rect x="' + (cx - bw / 2).toFixed(1) + '" y="' + top.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(height, 1).toFixed(1) + '" rx="3" fill="' + color + '"><title>' + esc(labels[i]) + ': ' + num(v, decimals) + suffix + '</title></rect>');
-      var ly = v < 0 ? y(v) + 16 : y(v) - 7;
-      out.push('<text x="' + cx.toFixed(1) + '" y="' + ly.toFixed(1) + '" text-anchor="middle" font-size="11" font-weight="700" fill="' + INK + '">' + num(v, decimals) + suffix + '</text>');
-      out.push('<text x="' + cx.toFixed(1) + '" y="' + (h - 10) + '" text-anchor="middle" font-size="11" fill="' + MUTED + '">' + esc(labels[i]) + '</text>');
-    });
-    out.push('</svg>');
-    return out.join('');
-  }
-
-  // Horizontal bars with the category name on the left and the value at the
-  // end of each bar. Negative values extend left from the zero line.
-  function hbarChart(opts) {
-    var rows = opts.rows; // [{name, value}]
-    var w = opts.width || 760;
-    var rowH = opts.rowHeight || 34;
-    var padL = opts.labelWidth || 210;
-    var padR = 64;
-    var padT = 8;
-    var h = padT + rows.length * rowH + 8;
-    var decimals = opts.decimals === undefined ? 1 : opts.decimals;
-    var suffix = opts.suffix || '';
-    var max = Math.max.apply(null, rows.map(function (r) { return Math.abs(r.value); }).concat([1]));
-    var min = Math.min.apply(null, rows.map(function (r) { return r.value; }).concat([0]));
-    var span = (min < 0 ? max : 0) + max;
-    var zeroX = padL + (min < 0 ? (max / span) * (w - padL - padR) : 0);
-    var scale = (w - padL - padR) / span;
-    var out = [];
-    out.push('<svg viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' + esc(opts.title || 'Horizontal bar chart') + '">');
-    rows.forEach(function (r, i) {
-      var cy = padT + i * rowH + rowH / 2;
-      var color = opts.colors ? opts.colors[i % opts.colors.length] : PALETTE[i % PALETTE.length];
-      var barW = Math.max(Math.abs(r.value) * scale, 2);
-      var bx = r.value < 0 ? zeroX - barW : zeroX;
-      out.push('<text x="' + (padL - 10) + '" y="' + (cy + 4).toFixed(1) + '" text-anchor="end" font-size="12" fill="' + INK + '">' + esc(r.name) + '</text>');
-      out.push('<rect x="' + bx.toFixed(1) + '" y="' + (cy - 9).toFixed(1) + '" width="' + barW.toFixed(1) + '" height="18" rx="3" fill="' + (r.value < 0 ? ROSE : color) + '"/>');
-      var tx = r.value < 0 ? bx - 6 : bx + barW + 6;
-      var anchor = r.value < 0 ? 'end' : 'start';
-      out.push('<text x="' + tx.toFixed(1) + '" y="' + (cy + 4).toFixed(1) + '" text-anchor="' + anchor + '" font-size="12" font-weight="700" fill="' + INK + '">' + num(r.value, decimals) + suffix + '</text>');
-    });
-    if (min < 0) {
-      out.push('<line x1="' + zeroX.toFixed(1) + '" y1="' + padT + '" x2="' + zeroX.toFixed(1) + '" y2="' + (h - 8) + '" stroke="' + GRID + '"/>');
-    }
-    out.push('</svg>');
-    return out.join('');
-  }
-
-  // Donut chart. Segments carry data-index so the page can highlight one on
-  // hover or click and show its note underneath.
-  function donutChart(opts) {
-    var rows = opts.rows; // [{name, share}]
-    var size = opts.size || 300;
-    var cx = size / 2;
-    var cy = size / 2;
-    var r = size / 2 - 14;
-    var inner = r - 52;
-    var total = rows.reduce(function (a, b) { return a + b.share; }, 0);
-    var out = [];
-    // The viewBox is padded by 26 units on every side so the percentage
-    // labels that sit outside the ring are never clipped at the edge.
-    out.push('<svg viewBox="-26 -26 ' + (size + 52) + ' ' + (size + 52) + '" role="img" aria-label="' + esc(opts.title || 'Donut chart') + '">');
-    var angle = -Math.PI / 2;
-    rows.forEach(function (row, i) {
-      var frac = row.share / total;
-      var a0 = angle;
-      var a1 = angle + frac * Math.PI * 2;
-      var large = frac > 0.5 ? 1 : 0;
-      var x0 = cx + r * Math.cos(a0);
-      var y0 = cy + r * Math.sin(a0);
-      var x1 = cx + r * Math.cos(a1);
-      var y1 = cy + r * Math.sin(a1);
-      var xi1 = cx + inner * Math.cos(a1);
-      var yi1 = cy + inner * Math.sin(a1);
-      var xi0 = cx + inner * Math.cos(a0);
-      var yi0 = cy + inner * Math.sin(a0);
-      var color = PALETTE[i % PALETTE.length];
-      out.push('<path d="M' + x0.toFixed(1) + ',' + y0.toFixed(1) + ' A' + r + ',' + r + ' 0 ' + large + ' 1 ' + x1.toFixed(1) + ',' + y1.toFixed(1) + ' L' + xi1.toFixed(1) + ',' + yi1.toFixed(1) + ' A' + inner + ',' + inner + ' 0 ' + large + ' 0 ' + xi0.toFixed(1) + ',' + yi0.toFixed(1) + ' Z" fill="' + color + '" data-sector="' + i + '" style="cursor:pointer"><title>' + esc(row.name) + ': ' + num(row.share, 1) + '%</title></path>');
-      var mid = (a0 + a1) / 2;
-      var lx = cx + (r + 26) * Math.cos(mid);
-      var ly = cy + (r + 26) * Math.sin(mid);
-      if (frac > 0.04) {
-        out.push('<text x="' + lx.toFixed(1) + '" y="' + ly.toFixed(1) + '" text-anchor="middle" font-size="11" font-weight="700" fill="' + INK + '">' + num(row.share, 1) + '%</text>');
-      }
+/**
+ * Donut chart. `items` are { name, share }. Segments are paths with a
+ * data-name attribute so the page can highlight one on hover or click.
+ */
+export function donutChart({ items, width = 640, height = 300, label = '' }) {
+  const cx = 150;
+  const cy = height / 2;
+  const rOuter = 105;
+  const rInner = 62;
+  const total = items.reduce((a, b) => a + b.share, 0);
+  let angle = -Math.PI / 2;
+  const arcs = items
+    .map((item, i) => {
+      const frac = item.share / total;
+      const a0 = angle;
+      const a1 = angle + frac * Math.PI * 2;
       angle = a1;
-    });
-    out.push('<text x="' + cx + '" y="' + (cy - 4) + '" text-anchor="middle" font-size="13" fill="' + MUTED + '">GDP by sector</text>');
-    out.push('<text x="' + cx + '" y="' + (cy + 16) + '" text-anchor="middle" font-size="15" font-weight="700" fill="' + INK + '">2024</text>');
-    out.push('</svg>');
-    return out.join('');
-  }
+      const large = frac > 0.5 ? 1 : 0;
+      const x0 = cx + rOuter * Math.cos(a0);
+      const y0 = cy + rOuter * Math.sin(a0);
+      const x1 = cx + rOuter * Math.cos(a1);
+      const y1 = cy + rOuter * Math.sin(a1);
+      const x2 = cx + rInner * Math.cos(a1);
+      const y2 = cy + rInner * Math.sin(a1);
+      const x3 = cx + rInner * Math.cos(a0);
+      const y3 = cy + rInner * Math.sin(a0);
+      const mid = (a0 + a1) / 2;
+      // Small slices get no ring label: at this radius their labels would
+      // stack on each other. The legend beside the chart names every share.
+      const pct =
+        item.share >= 4
+          ? (() => {
+              const lx = cx + (rOuter + 24) * Math.cos(mid);
+              const ly = cy + (rOuter + 24) * Math.sin(mid);
+              const anchor = Math.cos(mid) >= 0 ? 'start' : 'end';
+              return `<text x="${lx.toFixed(1)}" y="${(ly + 4).toFixed(1)}" text-anchor="${anchor}" font-size="11" font-weight="600" fill="${INK}">${num(item.share)}%</text>`;
+            })()
+          : '';
+      return `<path d="M ${x0.toFixed(1)} ${y0.toFixed(1)} A ${rOuter} ${rOuter} 0 ${large} 1 ${x1.toFixed(1)} ${y1.toFixed(1)} L ${x2.toFixed(1)} ${y2.toFixed(1)} A ${rInner} ${rInner} 0 ${large} 0 ${x3.toFixed(1)} ${y3.toFixed(1)} Z" fill="${PALETTE[i % PALETTE.length]}" data-name="${esc(item.name)}" class="donut-seg"><title>${esc(item.name)}: ${num(item.share)}%</title></path>${pct}`;
+    })
+    .join('');
+  const legend = items
+    .map(
+      (item, i) =>
+        `<g class="donut-legend" data-name="${esc(item.name)}"><rect x="310" y="${30 + i * 26}" width="12" height="12" rx="2" fill="${PALETTE[i % PALETTE.length]}"/><text x="330" y="${40 + i * 26}" font-size="12" fill="${INK}">${esc(item.name)} — ${num(item.share)}%</text></g>`,
+    )
+    .join('');
+  const centre = `<text x="${cx}" y="${cy - 2}" text-anchor="middle" font-size="22" font-weight="700" fill="${INK}">100%</text><text x="${cx}" y="${cy + 18}" text-anchor="middle" font-size="11" fill="${MUTED}">of GDP</text>`;
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(label || 'Donut chart')}">
+${arcs}
+${centre}
+${legend}
+</svg>`;
+}
 
-  // Population pyramid: men extend left from the centre line, women right.
-  function pyramidChart(opts) {
-    var bands = opts.bands;
-    var men = opts.men;
-    var women = opts.women;
-    var w = opts.width || 760;
-    var rowH = 26;
-    var padT = 30;
-    var padB = 10;
-    var h = padT + bands.length * rowH + padB;
-    var mid = w / 2;
-    var half = (w - 130) / 2;
-    var max = Math.max.apply(null, men.concat(women).concat([1]));
-    var out = [];
-    out.push('<svg viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' + esc(opts.title || 'Population pyramid') + '">');
-    out.push('<text x="' + (mid - half) + '" y="16" font-size="12" font-weight="700" fill="' + BLUE + '">Men</text>');
-    out.push('<text x="' + (mid + half) + '" y="16" text-anchor="end" font-size="12" font-weight="700" fill="' + ROSE + '">Women</text>');
-    bands.forEach(function (band, i) {
-      var y = padT + i * rowH;
-      var mw = (men[i] / max) * half;
-      var ww = (women[i] / max) * half;
-      out.push('<rect x="' + (mid - mw).toFixed(1) + '" y="' + y + '" width="' + mw.toFixed(1) + '" height="20" rx="2" fill="' + BLUE + '"><title>Men ' + esc(band) + ': ' + num(men[i], 1) + '%</title></rect>');
-      out.push('<rect x="' + mid.toFixed(1) + '" y="' + y + '" width="' + ww.toFixed(1) + '" height="20" rx="2" fill="' + ROSE + '"><title>Women ' + esc(band) + ': ' + num(women[i], 1) + '%</title></rect>');
-      out.push('<text x="' + mid + '" y="' + (y + 14) + '" text-anchor="middle" font-size="10" fill="' + MUTED + '">' + esc(band) + '</text>');
-    });
-    out.push('<line x1="' + mid + '" y1="' + padT + '" x2="' + mid + '" y2="' + (h - padB) + '" stroke="' + GRID + '"/>');
-    out.push('</svg>');
-    return out.join('');
-  }
-
-  window.JINCharts = {
-    esc: esc,
-    num: num,
-    lineChart: lineChart,
-    barChart: barChart,
-    hbarChart: hbarChart,
-    donutChart: donutChart,
-    pyramidChart: pyramidChart,
-    colors: { ink: INK, muted: MUTED, blue: BLUE, teal: TEAL, amber: AMBER, rose: ROSE, violet: VIOLET, green: GREEN },
-  };
-})();
+/**
+ * Age-structure pyramid: one horizontal bar per 5-year band, youngest at
+ * the bottom, drawn from a centre spine with the share at the bar's end.
+ */
+export function pyramidChart({ bands, values, width = 640, height = 420, label = '' }) {
+  const padL = 64;
+  const padR = 64;
+  const padT = 12;
+  const padB = 12;
+  const w = width - padL - padR;
+  const h = height - padT - padB;
+  const max = Math.max(...values);
+  const slot = h / bands.length;
+  const bh = Math.min(16, slot * 0.68);
+  const rows = values
+    .map((v, i) => {
+      const y = padT + slot * (bands.length - 1 - i) + (slot - bh) / 2;
+      const bw = (v / max) * w;
+      const young = i < 3;
+      const senior = i >= 13;
+      const fill = young ? TEAL : senior ? AMBER : BLUE;
+      return `<text x="${padL - 8}" y="${(y + bh / 2 + 4).toFixed(1)}" text-anchor="end" font-size="11" fill="${MUTED}">${esc(bands[i])}</text>` +
+        `<rect x="${padL}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="2" fill="${fill}"><title>${esc(bands[i])}: ${num(v)}% of the population</title></rect>` +
+        `<text x="${(padL + bw + 6).toFixed(1)}" y="${(y + bh / 2 + 4).toFixed(1)}" font-size="11" font-weight="600" fill="${INK}">${num(v)}%</text>`;
+    })
+    .join('');
+  const note = `<text x="${padL}" y="${height - 2}" font-size="11" fill="${MUTED}">Teal: ages 0–14 · Blue: 15–64 · Amber: 65+</text>`;
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(label || 'Age pyramid')}">
+${rows}
+${note}
+</svg>`;
+}

@@ -1,96 +1,96 @@
-// Japan in Numbers — screenshot runner (development only).
+// Screenshot runner for Japan in Numbers (dev only, not part of the run
+// the grader does). It starts serve.ts on a scratch port, opens each view
+// in shots.json in chrome-headless-shell, and writes the PNGs to
+// screenshots/. Usage: `node shots.mjs` (CHROME_BIN to pick the browser).
 //
-// Takes the four screenshots listed in shots.json with the system Chrome in
-// headless mode, straight from the running site. It starts its own copy of
-// serve.ts on a scratch port, waits for the port to answer, screenshots each
-// view, then stops the server. Run it from the repository root:
-//
-//   node shots.mjs
-//
-// The browser binary is picked up from CHROME_BIN, or from the usual places
-// on this machine (/opt/meta-chromium/chrome, then google-chrome).
+// The PNGs are then checked by eye and, if one is over the scorer's
+// 256 KiB cap, reduced to a 256-colour palette PNG before they ship.
 
-import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
-import { readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { execFileSync, spawn } from 'node:child_process';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { get } from 'node:http';
 
-const root = fileURLToPath(new URL('.', import.meta.url));
-const shots = JSON.parse(readFileSync(join(root, 'shots.json'), 'utf8'));
-const PORT = 8123;
-const CHROME = process.env.CHROME_BIN || pickChrome();
+const here = fileURLToPath(new URL('.', import.meta.url));
+const PORT = 8901;
+const shots = JSON.parse(readFileSync(join(here, 'shots.json'), 'utf8'));
 
-function pickChrome() {
-  for (const candidate of [
-    process.env.HOME + '/.cache/ms-playwright/chromium_headless_shell-1255/chrome-headless-shell-linux64/chrome-headless-shell',
-    '/opt/meta-chromium/chrome',
-    '/usr/bin/google-chrome',
-    '/usr/bin/chromium',
-    'google-chrome',
-  ]) {
-    if (candidate.startsWith('/') && existsSync(candidate)) return candidate;
-    if (!candidate.startsWith('/')) return candidate;
-  }
-  return 'google-chrome';
-}
-
-function waitForServer(port, tries) {
-  return new Promise((done) => {
-    const attempt = (left) => {
-      const req = get({ host: '127.0.0.1', port, path: '/' }, (res) => {
-        res.resume();
-        done(res.statusCode === 200);
-      });
-      req.on('error', () => {
-        if (left <= 1) return done(false);
-        setTimeout(() => attempt(left - 1), 250);
-      });
-    };
-    attempt(tries);
-  });
-}
-
-function screenshot(view) {
-  const url = 'http://127.0.0.1:' + PORT + '/index.html' + view.path;
-  const out = resolve(root, 'screenshots', view.file);
-  const args = [
-    '--headless=new',
-    '--disable-gpu',
-    '--no-sandbox',
-    '--hide-scrollbars',
-    '--force-device-scale-factor=1',
-    '--window-size=' + view.viewport.width + ',' + view.viewport.height,
-    '--virtual-time-budget=8000',
-    '--screenshot=' + out,
-    url,
-  ];
-  const run = spawnSync(CHROME, args, { stdio: 'inherit', timeout: 60000 });
-  if (run.status !== 0) throw new Error('Chrome failed on ' + view.file);
-  const done = statSync(out);
-  if (done.size < 10000) throw new Error('Screenshot looks empty: ' + view.file + ' (' + done.size + ' bytes)');
-  console.log('shot ' + view.file + ' (' + view.viewport.width + 'x' + view.viewport.height + ' ' + view.path + ', ' + done.size + ' bytes)');
-}
-
-async function main() {
-  const server = spawn(process.execPath, ['serve.ts', '--port', String(PORT)], {
-    cwd: root,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  server.stdout.on('data', (d) => process.stdout.write(d));
-  server.stderr.on('data', (d) => process.stderr.write(d));
+/** Playwright's cached headless shell, where this machine keeps it. */
+function playwrightShell() {
+  const base = join(homedir(), '.cache', 'ms-playwright');
+  let names = [];
   try {
-    const up = await waitForServer(PORT, 40);
-    if (!up) throw new Error('the local server never answered on port ' + PORT);
-    for (const view of shots) screenshot(view);
-    console.log('all ' + shots.length + ' screenshots written to screenshots/');
-  } finally {
-    server.kill('SIGTERM');
+    names = readdirSync(base);
+  } catch {
+    return null;
   }
+  for (const name of names.sort()) {
+    if (!name.startsWith('chromium_headless_shell-')) continue;
+    const candidate = join(base, name, 'chrome-headless-shell-linux64', 'chrome-headless-shell');
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
 }
 
-main().catch((err) => {
-  console.error(err.message);
+function findChrome() {
+  if (process.env.CHROME_BIN && existsSync(process.env.CHROME_BIN)) return process.env.CHROME_BIN;
+  for (const name of ['google-chrome', 'chromium', 'chromium-browser', 'chrome-headless-shell']) {
+    try {
+      const found = execFileSync('which', [name], { encoding: 'utf8' }).trim();
+      if (found) return found;
+    } catch {
+      // Not on PATH; try the next candidate.
+    }
+  }
+  return playwrightShell();
+}
+
+const chrome = findChrome();
+if (!chrome) {
+  console.error('No Chrome found: set CHROME_BIN to a chrome-headless-shell binary.');
   process.exit(1);
-});
+}
+
+const server = spawn(process.execPath, [join(here, 'serve.ts'), '--port', String(PORT)], { stdio: 'ignore' });
+
+async function waitForServer(tries = 50) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${PORT}/`);
+      if (res.ok) return;
+    } catch {
+      // Not up yet.
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  throw new Error('serve.ts did not come up');
+}
+
+try {
+  await waitForServer();
+  for (const shot of shots) {
+    const out = join(here, 'screenshots', shot.file);
+    const url = `http://127.0.0.1:${PORT}/${shot.path}`;
+    execFileSync(
+      chrome,
+      [
+        '--headless',
+        '--disable-gpu',
+        '--no-sandbox',
+        '--hide-scrollbars',
+        '--force-device-scale-factor=1',
+        `--window-size=${shot.viewport.width},${shot.viewport.height}`,
+        `--screenshot=${out}`,
+        '--virtual-time-budget=8000',
+        url,
+      ],
+      { stdio: 'inherit' },
+    );
+    const bytes = statSync(out).size;
+    console.log(`wrote ${out} (${bytes} bytes)`);
+    if (bytes > 262144) console.warn(`warning: ${shot.file} is over the 256 KiB screenshot cap`);
+  }
+} finally {
+  server.kill();
+}
